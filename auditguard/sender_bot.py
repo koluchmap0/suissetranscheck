@@ -1746,39 +1746,78 @@ async def _bg_mass_imap_check(
     gmail_markers = list(stats["markers_spoof_gmail"].keys()) + list(stats["markers_basique_gmail"].keys())
 
     def _batch_gmail(markers_to_check):
-        import imaplib, ssl as _ssl
+        """Bulk Gmail IMAP check — fetch recent subjects, match markers locally.
+        Avoids per-marker SUBJECT search which gets throttled at 60+ markers."""
+        import imaplib, ssl as _ssl, email as _email
         results = {}
+        marker_set = set(markers_to_check)
+        if not marker_set:
+            return results
         try:
             ctx_ssl = _ssl.create_default_context()
             ctx_ssl.check_hostname = False
             ctx_ssl.verify_mode = _ssl.CERT_NONE
             imap = imaplib.IMAP4_SSL(GMAIL_CHECKER["imap_host"], GMAIL_CHECKER["imap_port"],
-                                      ssl_context=ctx_ssl, timeout=30)
+                                      ssl_context=ctx_ssl, timeout=60)
             imap.login(GMAIL_CHECKER["email"], GMAIL_CHECKER["password"])
-            # SPAM first
-            try:
-                st, _ = imap.select("[Gmail]/Spam", readonly=True)
-                if st == "OK":
-                    for m in markers_to_check:
-                        st2, ids = imap.search(None, f'SUBJECT "{m}"')
-                        if st2 == "OK" and ids[0] and ids[0].strip():
-                            results[m] = "spam"
-            except Exception:
-                pass
-            remaining = [m for m in markers_to_check if m not in results]
-            if remaining:
+
+            def _scan_folder(folder_name, label):
+                """Fetch recent subjects from folder and match markers."""
+                found = {}
                 try:
-                    st, _ = imap.select("INBOX", readonly=True)
-                    if st == "OK":
-                        for m in remaining:
+                    st, data = imap.select(folder_name, readonly=True)
+                    if st != "OK":
+                        return found
+                    msg_count = int(data[0]) if data[0] else 0
+                    if msg_count == 0:
+                        return found
+                    # Fetch last N messages (enough to cover our batch)
+                    fetch_count = min(msg_count, max(len(marker_set) * 3, 500))
+                    start_id = max(1, msg_count - fetch_count + 1)
+                    fetch_range = f"{start_id}:{msg_count}"
+                    st2, msg_data = imap.fetch(fetch_range, "(BODY.PEEK[HEADER.FIELDS (SUBJECT)])")
+                    if st2 != "OK":
+                        return found
+                    for item in msg_data:
+                        if isinstance(item, tuple) and len(item) >= 2:
+                            raw_header = item[1]
+                            if isinstance(raw_header, bytes):
+                                raw_header = raw_header.decode("utf-8", errors="replace")
+                            subj_line = raw_header.replace("\r\n", " ").replace("\n", " ")
+                            # Check each unfound marker
+                            for m in list(marker_set - set(found.keys())):
+                                if m in subj_line:
+                                    found[m] = label
+                except Exception as e:
+                    print(f"[MASS IMAP] Gmail {folder_name} scan error: {e}", flush=True)
+                return found
+
+            # SPAM first (higher priority)
+            spam_found = _scan_folder("[Gmail]/Spam", "spam")
+            results.update(spam_found)
+            # INBOX for remaining
+            inbox_found = _scan_folder("INBOX", "inbox")
+            for m, v in inbox_found.items():
+                if m not in results:
+                    results[m] = v
+            # Fallback: individual search for any still missing (small batch)
+            still_missing = [m for m in markers_to_check if m not in results]
+            if still_missing and len(still_missing) <= 50:
+                for folder, label in [("[Gmail]/Spam", "spam"), ("INBOX", "inbox")]:
+                    try:
+                        st, _ = imap.select(folder, readonly=True)
+                        if st != "OK":
+                            continue
+                        for m in [x for x in still_missing if x not in results]:
                             st2, ids = imap.search(None, f'SUBJECT "{m}"')
                             if st2 == "OK" and ids[0] and ids[0].strip():
-                                results[m] = "inbox"
-                except Exception:
-                    pass
+                                results[m] = label
+                    except Exception:
+                        break
             imap.logout()
+            print(f"[MASS IMAP] Gmail bulk: {len(results)}/{len(markers_to_check)} found", flush=True)
         except Exception as e:
-            print(f"[MASS IMAP] Gmail error: {e}")
+            print(f"[MASS IMAP] Gmail error: {e}", flush=True)
         return results
 
     gmail_results = await asyncio.to_thread(_batch_gmail, gmail_markers) if gmail_markers else {}

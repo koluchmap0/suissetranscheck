@@ -270,34 +270,67 @@ def check_outlook_delivery(marker, max_retries=2, retry_delay=5.0, timeout=15.0)
 
 
 def batch_outlook_imap(markers_to_check):
-    """Batch check Outlook IMAP. Returns {marker: "inbox"/"spam"}."""
+    """Bulk Outlook IMAP check — fetch recent subjects, match markers locally.
+    Avoids per-marker SUBJECT search which gets throttled."""
     results = {}
     if not markers_to_check or not is_outlook_checker_configured():
         return results
+    marker_set = set(markers_to_check)
     try:
-        imap = _connect_outlook_imap(timeout=30)
-        # Junk FIRST
-        try:
-            st, _ = imap.select(OUTLOOK_CHECKER["spam_folder"], readonly=True)
-            if st == "OK":
-                for m in markers_to_check:
-                    st2, ids = imap.search(None, f'SUBJECT "{m}"')
-                    if st2 == "OK" and ids[0] and ids[0].strip():
-                        results[m] = "spam"
-        except Exception:
-            pass
-        remaining = [m for m in markers_to_check if m not in results]
-        if remaining:
+        imap = _connect_outlook_imap(timeout=60)
+
+        def _scan_folder_outlook(folder_name, label):
+            found = {}
             try:
-                st, _ = imap.select(OUTLOOK_CHECKER["inbox_folder"], readonly=True)
-                if st == "OK":
-                    for m in remaining:
+                st, data = imap.select(folder_name, readonly=True)
+                if st != "OK":
+                    return found
+                msg_count = int(data[0]) if data[0] else 0
+                if msg_count == 0:
+                    return found
+                fetch_count = min(msg_count, max(len(marker_set) * 3, 500))
+                start_id = max(1, msg_count - fetch_count + 1)
+                fetch_range = f"{start_id}:{msg_count}"
+                st2, msg_data = imap.fetch(fetch_range, "(BODY.PEEK[HEADER.FIELDS (SUBJECT)])")
+                if st2 != "OK":
+                    return found
+                for item in msg_data:
+                    if isinstance(item, tuple) and len(item) >= 2:
+                        raw_header = item[1]
+                        if isinstance(raw_header, bytes):
+                            raw_header = raw_header.decode("utf-8", errors="replace")
+                        subj_line = raw_header.replace("\r\n", " ").replace("\n", " ")
+                        for m in list(marker_set - set(found.keys())):
+                            if m in subj_line:
+                                found[m] = label
+            except Exception as e:
+                print(f"[OUTLOOK IMAP] {folder_name} scan error: {e}", flush=True)
+            return found
+
+        # Junk FIRST
+        junk_found = _scan_folder_outlook(OUTLOOK_CHECKER["spam_folder"], "spam")
+        results.update(junk_found)
+        # Inbox for remaining
+        inbox_found = _scan_folder_outlook(OUTLOOK_CHECKER["inbox_folder"], "inbox")
+        for m, v in inbox_found.items():
+            if m not in results:
+                results[m] = v
+        # Fallback: individual search for small remaining batch
+        still_missing = [m for m in markers_to_check if m not in results]
+        if still_missing and len(still_missing) <= 50:
+            for folder, label in [(OUTLOOK_CHECKER["spam_folder"], "spam"), (OUTLOOK_CHECKER["inbox_folder"], "inbox")]:
+                try:
+                    st, _ = imap.select(folder, readonly=True)
+                    if st != "OK":
+                        continue
+                    for m in [x for x in still_missing if x not in results]:
                         st2, ids = imap.search(None, f'SUBJECT "{m}"')
                         if st2 == "OK" and ids[0] and ids[0].strip():
-                            results[m] = "inbox"
-            except Exception:
-                pass
+                            results[m] = label
+                except Exception:
+                    break
         imap.logout()
+        print(f"[OUTLOOK IMAP] bulk: {len(results)}/{len(markers_to_check)} found", flush=True)
     except Exception as e:
         print(f"[OUTLOOK IMAP] batch error: {e}")
     return results
