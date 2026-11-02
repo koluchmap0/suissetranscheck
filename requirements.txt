@@ -1,0 +1,5 @@
+dnspython>=2.6,<3
+httpx[http2]>=0.27,<1
+typer>=0.12,<1
+python-telegram-bot>=21,<22
+PySocks>=1.7

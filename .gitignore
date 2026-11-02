@@ -1,0 +1,12 @@
+.env
+*.pyc
+__pycache__/
+venv/
+*.egg-info/
+bustgo-hunt.db*
+.outlook_refresh_token
+nohup.out
+*.log
+*.bak*
+*.pre_ubs_removal
+proxies.txt

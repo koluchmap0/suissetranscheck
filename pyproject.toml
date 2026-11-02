@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "auditguard"
+version = "1.0.0"
+description = "BUST GO Sender — Spoof + Mass Spoof Test Bot"
+requires-python = ">=3.11"
+dependencies = ["dnspython>=2.6,<3", "httpx[http2]>=0.27,<1", "typer>=0.12,<1", "python-telegram-bot>=21,<22", "PySocks>=1.7"]
+
+[project.scripts]
+bust-go = "auditguard.cli:app"
+bust-go-sender = "auditguard.sender_bot:run_sender"
+
+[tool.setuptools.packages.find]
+include = ["auditguard*"]
