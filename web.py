@@ -305,7 +305,8 @@ textarea {
   font-family: 'JetBrains Mono', monospace;
   font-size: 13px;
   resize: vertical;
-  min-height: 120px;
+  min-height: 200px;
+  max-height: 500px;
   outline: none;
   transition: border-color 0.2s;
 }
@@ -469,8 +470,9 @@ button#run:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
   </header>
 
   <div class="card">
-    <label>Emails (un par ligne)</label>
+    <label>Emails (un par ligne, virgule, ou espace)</label>
     <textarea id="emails" placeholder="email1@example.com&#10;email2@example.com&#10;email3@example.com"></textarea>
+    <div id="email-count" style="font-size:11px;color:var(--text2);margin-top:4px;font-family:'JetBrains Mono',monospace;"></div>
     <div class="controls">
       <div class="field">
         <label>Threads</label>
@@ -508,10 +510,22 @@ button#run:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
 <script>
 let allResults = [];
 
+function parseEmails(raw) {
+  return raw.split(/[,;\\s]+/)
+    .map(e => e.trim().toLowerCase())
+    .filter(e => e && e.includes('@') && e.includes('.'));
+}
+
+// Live email counter
+document.getElementById('emails').addEventListener('input', function() {
+  const count = parseEmails(this.value).length;
+  document.getElementById('email-count').textContent = count > 0 ? count + ' emails detected' : '';
+});
+
 async function startCheck() {
   const raw = document.getElementById('emails').value;
-  const emails = raw.split('\\n').map(e => e.trim()).filter(e => e && e.includes('@'));
-  if (!emails.length) return;
+  const emails = parseEmails(raw);
+  if (!emails.length) { alert('Aucun email valide'); return; }
 
   const threads = parseInt(document.getElementById('threads').value) || 3;
   const delay = parseFloat(document.getElementById('delay').value) || 0.5;
