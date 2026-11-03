@@ -1,0 +1,9 @@
+# Degussa Email Check — 2026-11-03T06:02:25.059281
+# registered / not_registered / error
+
+registered           emilien.durovop@proton.me
+registered           test@test.com
+not_registered       contact@degussa.com
+not_registered       nimportequoi999@outlook.com
+not_registered       info@degussa.com
+not_registered       random_fake_email_xyz@yahoo.fr
